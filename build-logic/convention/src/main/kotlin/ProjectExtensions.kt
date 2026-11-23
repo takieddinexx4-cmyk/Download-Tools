@@ -1,4 +1,7 @@
+```kotlin
+import com.android.build.api.dsl.ApplicationExtension
 import com.android.build.api.dsl.CommonExtension
+import com.android.build.api.dsl.LibraryExtension
 import org.gradle.api.JavaVersion
 import org.gradle.api.Project
 import org.gradle.api.artifacts.VersionCatalog
@@ -11,21 +14,24 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 internal val Project.libs: VersionCatalog
     get() = extensions.getByType<VersionCatalogsExtension>().named("libs")
 
-internal fun Project.configureKotlinAndroid(commonExtension: CommonExtension<*, *, *, *, *, *>) {
-    commonExtension.apply {
-        compileSdk {
+internal fun Project.configureKotlinAndroid(commonExtension: CommonExtension) {
+    when (commonExtension) {
+        is ApplicationExtension -> commonExtension.compileSdk {
             version = release(37) {
                 minorApiLevel = 1
             }
         }
-        defaultConfig {
-            minSdk = 26
+        is LibraryExtension -> commonExtension.compileSdk {
+            version = release(37) {
+                minorApiLevel = 1
+            }
         }
-        compileOptions {
-            sourceCompatibility = JavaVersion.VERSION_21
-            targetCompatibility = JavaVersion.VERSION_21
-        }
+        else -> commonExtension.compileSdk = 37
     }
+    commonExtension.defaultConfig.minSdk = 26
+    commonExtension.compileOptions.sourceCompatibility = JavaVersion.VERSION_21
+    commonExtension.compileOptions.targetCompatibility = JavaVersion.VERSION_21
+
     tasks.withType<KotlinCompile>().configureEach {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_21)
@@ -36,3 +42,4 @@ internal fun Project.configureKotlinAndroid(commonExtension: CommonExtension<*, 
         }
     }
 }
+```
