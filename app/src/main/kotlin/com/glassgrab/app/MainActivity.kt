@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
@@ -130,7 +131,7 @@ private fun GlassGrabRootApp(
     val windowSizeClass = currentWindowAdaptiveInfo().windowSizeClass
     val useNavigationRail = windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)
 
-    val topLevelRoutes = remember {
+    val topLevelRoutes: List<NavKey> = remember {
         listOf(
             GlassGrabRoute.Home,
             GlassGrabRoute.Downloads,
