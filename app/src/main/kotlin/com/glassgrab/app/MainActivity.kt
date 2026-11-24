@@ -36,7 +36,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
-import androidx.window.core.layout.WindowWidthSizeClass
+import androidx.window.core.layout.WindowSizeClass
 import com.glassgrab.app.navigation.GlassGrabRoute
 import com.glassgrab.core.common.DeviceCapabilities
 import com.glassgrab.core.common.Formatters
@@ -127,8 +127,8 @@ private fun GlassGrabRootApp(
     var activeFormatSheetMedia by remember { mutableStateOf<MediaItemInfo?>(null) }
 
     val hazeState = rememberHazeState()
-    val widthClass = currentWindowAdaptiveInfo().windowSizeClass.windowWidthSizeClass
-    val useNavigationRail = widthClass != WindowWidthSizeClass.COMPACT
+    val windowSizeClass = currentWindowAdaptiveInfo().windowSizeClass
+    val useNavigationRail = windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)
 
     val topLevelRoutes = remember {
         listOf(

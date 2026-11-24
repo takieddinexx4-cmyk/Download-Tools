@@ -49,7 +49,7 @@ object Formatters {
 
     fun extractFirstUrl(text: String?): String? {
         if (text.isNullOrBlank()) return null
-        val regex = Regex("https?://[^\s<>"]+", RegexOption.IGNORE_CASE)
+        val regex = Regex("""https?://[^\s<>"]+""", RegexOption.IGNORE_CASE)
         return regex.find(text)?.value?.trimEnd('.', ',', ')', ']', '!')
     }
 }

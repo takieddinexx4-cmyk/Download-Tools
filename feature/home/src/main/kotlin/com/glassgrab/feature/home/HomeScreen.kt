@@ -33,7 +33,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
+import android.content.ClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -60,11 +61,14 @@ fun HomeRoute(
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    fun readClipboardText(): String? {
+        val cm = context.getSystemService(ClipboardManager::class.java)
+        return cm?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+    }
 
     LaunchedEffect(Unit) {
-        val clipText = clipboard.getText()?.text
-        viewModel.onIntent(HomeIntent.ClipboardDetected(clipText))
+        viewModel.onIntent(HomeIntent.ClipboardDetected(readClipboardText()))
     }
 
     LaunchedEffect(sharedUrl) {
@@ -86,7 +90,7 @@ fun HomeRoute(
         state = state,
         onIntent = viewModel::onIntent,
         onPasteClick = {
-            val clipText = clipboard.getText()?.text.orEmpty()
+            val clipText = readClipboardText().orEmpty()
             val url = Formatters.extractFirstUrl(clipText) ?: clipText
             viewModel.onIntent(HomeIntent.UrlChanged(url))
         },
