@@ -62,7 +62,7 @@ class YtDlpEngine @Inject constructor(
 
         val platform = parser.detectPlatform(url)
         if (platform == Platform.TIKTOK) {
-            return@withContext analyzeTikTokWithFallback(url)
+            return@withContext analyzeTikTokHighestQuality(url)
         }
 
         executeWithRetry(maxAttempts = 2, timeoutMs = 45_000L) {
@@ -71,37 +71,64 @@ class YtDlpEngine @Inject constructor(
                 addOption("--flat-playlist")
                 addOption("--no-warnings")
                 addOption("--no-check-certificates")
+                addOption("-S", "res,fps,br")
             }
             val response = YoutubeDL.getInstance().execute(request)
             parser.parseDumpJson(response.out, url)
         }
     }
 
-    private suspend fun analyzeTikTokWithFallback(url: String): GlassResult<MediaItemInfo> {
+    /**
+     * TikTok HD/4K No-Watermark strategy:
+     * 1. Run yt-dlp's default modern extractor (combines web + mobile API and exposes 1080p/4K HEVC/bytevc1 streams).
+     * 2. If it fails or only returns SD (<= 576p), probe the mobile API fallback and pick whichever has higher resolution/bitrate.
+     */
+    private suspend fun analyzeTikTokHighestQuality(url: String): GlassResult<MediaItemInfo> {
         val primary = executeWithRetry(maxAttempts = 2, timeoutMs = 35_000L) {
             val request = YoutubeDLRequest(url).apply {
                 addOption("--dump-single-json")
                 addOption("--no-warnings")
-                addOption("--extractor-args", "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com")
+                addOption("--no-check-certificates")
+                addOption("-S", "res,fps,br,vcodec:h265,h264")
             }
             val response = YoutubeDL.getInstance().execute(request)
             parser.parseDumpJson(response.out, url)
         }
-        if (primary is GlassResult.Success) return primary
+
+        val primaryTopRes = (primary as? GlassResult.Success)
+            ?.data?.formats?.firstOrNull { !it.isAudioOnly }?.resolutionHeight ?: 0
+
+        if (primary is GlassResult.Success && primaryTopRes >= 720) {
+            return primary
+        }
 
         val fallback = executeWithRetry(maxAttempts = 1, timeoutMs = 35_000L) {
             val request = YoutubeDLRequest(url).apply {
                 addOption("--dump-single-json")
                 addOption("--no-warnings")
-                addOption("--extractor-args", "tiktok:webpage_download=1")
+                addOption("--no-check-certificates")
+                addOption("--extractor-args", "tiktok:api_hostname=api16-normal-c-useast1a.tiktokv.com")
+                addOption("-S", "res,fps,br,vcodec:h265,h264")
             }
             val response = YoutubeDL.getInstance().execute(request)
             parser.parseDumpJson(response.out, url)
         }
+
+        if (primary is GlassResult.Success && fallback is GlassResult.Success) {
+            val fallbackTopRes = fallback.data.formats.firstOrNull { !it.isAudioOnly }?.resolutionHeight ?: 0
+            val primaryTopBr = primary.data.formats.firstOrNull { !it.isAudioOnly }?.bitrateKbps ?: 0
+            val fallbackTopBr = fallback.data.formats.firstOrNull { !it.isAudioOnly }?.bitrateKbps ?: 0
+            return if (fallbackTopRes > primaryTopRes || (fallbackTopRes == primaryTopRes && fallbackTopBr > primaryTopBr)) {
+                fallback
+            } else {
+                primary
+            }
+        }
+        if (primary is GlassResult.Success) return primary
         if (fallback is GlassResult.Success) return fallback
 
-        val primaryReason = (primary as GlassResult.Failure).error.technicalDetail ?: "Primary API path failed"
-        val fallbackReason = (fallback as GlassResult.Failure).error.technicalDetail ?: "Web extractor fallback failed"
+        val primaryReason = (primary as GlassResult.Failure).error.technicalDetail ?: "Default TikTok extractor failed"
+        val fallbackReason = (fallback as GlassResult.Failure).error.technicalDetail ?: "Mobile API fallback failed"
         return GlassResult.Failure(
             GlassError.TikTokExtractionFailed(
                 primaryReason = primaryReason,
@@ -127,18 +154,16 @@ class YtDlpEngine @Inject constructor(
 
         outputDir.mkdirs()
         val template = File(outputDir, "%(title).80B [%(id)s].%(ext)s").absolutePath
-        val platform = parser.detectPlatform(url)
 
         executeWithRetry(maxAttempts = 2, timeoutMs = 30L * 60L * 1000L) {
             val request = YoutubeDLRequest(url).apply {
                 addOption("-o", template)
                 addOption("-f", formatSelector)
+                addOption("-S", "res,fps,br")
                 addOption("--continue")
                 addOption("--no-mtime")
+                addOption("--no-check-certificates")
                 addOption("--embed-metadata")
-                if (platform == Platform.TIKTOK) {
-                    addOption("--extractor-args", "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com")
-                }
                 if (isAudioOnly) {
                     addOption("-x")
                     addOption("--audio-format", container.lowercase())

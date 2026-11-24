@@ -12,7 +12,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
@@ -128,19 +127,23 @@ class YtDlpJsonParser @Inject constructor() {
             val vcodecRaw = fmt["vcodec"]?.jsonPrimitive?.contentOrNull.orEmpty()
             val acodecRaw = fmt["acodec"]?.jsonPrimitive?.contentOrNull.orEmpty()
             val ext = fmt["ext"]?.jsonPrimitive?.contentOrNull?.uppercase() ?: "MP4"
+            val width = fmt["width"]?.jsonPrimitive?.intOrNull
             val height = fmt["height"]?.jsonPrimitive?.intOrNull
             val fps = fmt["fps"]?.jsonPrimitive?.doubleOrNull?.toInt()
+            val vbr = fmt["vbr"]?.jsonPrimitive?.doubleOrNull
+            val tbr = fmt["tbr"]?.jsonPrimitive?.doubleOrNull
+            val bitrateKbps = (vbr ?: tbr)?.toInt()?.takeIf { it > 0 }
             val size = fmt["filesize"]?.jsonPrimitive?.longOrNull
                 ?: fmt["filesize_approx"]?.jsonPrimitive?.longOrNull
             val formatNote = fmt["format_note"]?.jsonPrimitive?.contentOrNull.orEmpty()
 
-            val hasVideo = vcodecRaw.isNotBlank() && vcodecRaw != "none"
+            val hasVideo = vcodecRaw != "none" && (vcodecRaw.isNotBlank() || (height != null && height >= 144))
             val hasAudio = acodecRaw.isNotBlank() && acodecRaw != "none"
 
             if (!hasVideo && hasAudio) {
                 if ((size ?: 0L) > bestAudioSize) bestAudioSize = size ?: 0L
                 val aCodec = parseAudioCodec(acodecRaw, ext)
-                val abr = fmt["abr"]?.jsonPrimitive?.doubleOrNull?.toInt()
+                val abr = fmt["abr"]?.jsonPrimitive?.doubleOrNull?.toInt() ?: bitrateKbps
                 audioFormats += MediaFormat(
                     formatId = formatId,
                     label = buildString {
@@ -156,30 +159,48 @@ class YtDlpJsonParser @Inject constructor() {
                     fileSizeBytes = size,
                     isAudioOnly = true,
                     ytDlpSelector = formatId,
+                    bitrateKbps = abr,
                 )
-            } else if (hasVideo && (height == null || height >= 144)) {
+            } else if (hasVideo) {
                 val isWatermarked = platform == Platform.TIKTOK &&
                     (formatId.contains("watermark", ignoreCase = true) ||
-                        formatNote.contains("watermarked", ignoreCase = true))
+                        formatNote.contains("watermarked", ignoreCase = true) ||
+                        formatId.startsWith("download", ignoreCase = true) && formatNote.contains("water", ignoreCase = true))
                 if (isWatermarked) continue
 
-                val vCodec = parseVideoCodec(vcodecRaw)
+                // Use the short edge for vertical (9:16) videos so 576x1024 is accurately 576p and 1080x1920 is 1080p
+                val effectiveRes = when {
+                    width != null && height != null -> minOf(width, height)
+                    height != null -> height
+                    else -> null
+                }
+                if (effectiveRes != null && effectiveRes < 144) continue
+
+                val dimensions = if (width != null && height != null) "${width}×${height}" else null
+                val vCodec = parseVideoCodec(vcodecRaw, formatId)
                 val aCodec = if (hasAudio) parseAudioCodec(acodecRaw, ext) else null
                 val requiresMerge = !hasAudio
-                val selector = if (requiresMerge) "$formatId+bestaudio/best" else formatId
+                val selector = when {
+                    requiresMerge -> "$formatId+bestaudio/best"
+                    platform == Platform.TIKTOK && formatId.contains("bytevc1", ignoreCase = true) ->
+                        "$formatId+bestaudio/$formatId/best"
+                    else -> formatId
+                }
                 val estimatedSize = if (requiresMerge && size != null) size + bestAudioSize else size
                 val resLabel = when {
-                    height == null -> "Original"
-                    height >= 4320 -> "4320p (8K)"
-                    height >= 2160 -> "2160p (4K)"
-                    height >= 1440 -> "1440p (2K)"
-                    else -> "${height}p"
+                    effectiveRes == null -> "Original"
+                    effectiveRes >= 4320 -> "4320p (8K)"
+                    effectiveRes >= 2160 -> "2160p (4K)"
+                    effectiveRes >= 1440 -> "1440p (2K)"
+                    effectiveRes >= 1080 -> "1080p Full HD"
+                    effectiveRes >= 720 -> "720p HD"
+                    else -> "${effectiveRes}p"
                 }
 
                 videoFormats += MediaFormat(
                     formatId = formatId,
                     label = resLabel,
-                    resolutionHeight = height,
+                    resolutionHeight = effectiveRes,
                     fps = fps,
                     videoCodec = vCodec,
                     audioCodec = aCodec,
@@ -189,22 +210,32 @@ class YtDlpJsonParser @Inject constructor() {
                     isNoWatermark = platform == Platform.TIKTOK,
                     requiresMerge = requiresMerge,
                     ytDlpSelector = selector,
+                    bitrateKbps = bitrateKbps,
+                    dimensionsLabel = dimensions,
                 )
             }
         }
 
+        // Sort strictly by highest resolution -> highest bitrate -> highest fps -> largest file size
         val sortedVideos = videoFormats
             .sortedWith(
                 compareByDescending<MediaFormat> { it.resolutionHeight ?: Int.MAX_VALUE }
+                    .thenByDescending { it.bitrateKbps ?: 0 }
                     .thenByDescending { it.fps ?: 0 }
                     .thenByDescending { it.fileSizeBytes ?: 0L },
             )
-            .distinctBy { Triple(it.resolutionHeight, it.fps, it.videoCodec) }
+            .distinctBy { listOf(it.resolutionHeight, it.fps, it.videoCodec, (it.bitrateKbps ?: 0) / 500) }
 
         val topVideo = sortedVideos.firstOrNull()
+        val bestSelector = if (platform == Platform.TIKTOK && topVideo != null) {
+            topVideo.ytDlpSelector
+        } else {
+            "bestvideo+bestaudio/best"
+        }
+
         val bestOriginal = MediaFormat(
             formatId = "best_original",
-            label = if (topVideo?.resolutionHeight != null) {
+            label = if (topVideo != null) {
                 "Best / Original (${topVideo.label})"
             } else {
                 "Best / Original"
@@ -219,7 +250,9 @@ class YtDlpJsonParser @Inject constructor() {
             isBestOriginal = true,
             isNoWatermark = platform == Platform.TIKTOK,
             requiresMerge = true,
-            ytDlpSelector = "bestvideo*+bestaudio/best",
+            ytDlpSelector = bestSelector,
+            bitrateKbps = topVideo?.bitrateKbps,
+            dimensionsLabel = topVideo?.dimensionsLabel,
         )
 
         val audioPresets = listOf(
@@ -278,11 +311,11 @@ class YtDlpJsonParser @Inject constructor() {
             isBestOriginal = true,
             isNoWatermark = platform == Platform.TIKTOK,
             requiresMerge = true,
-            ytDlpSelector = "bestvideo*+bestaudio/best",
+            ytDlpSelector = "bestvideo+bestaudio/best",
         ),
         MediaFormat(
             formatId = "fhd_1080",
-            label = "1080p",
+            label = "1080p Full HD",
             resolutionHeight = 1080,
             fps = 60,
             videoCodec = VideoCodec.H264,
@@ -308,13 +341,14 @@ class YtDlpJsonParser @Inject constructor() {
         ),
     )
 
-    private fun parseVideoCodec(raw: String): VideoCodec {
-        val lower = raw.lowercase()
+    private fun parseVideoCodec(raw: String, formatId: String): VideoCodec {
+        val lower = "$raw $formatId".lowercase()
         return when {
-            lower.startsWith("av01") || lower.contains("av1") -> VideoCodec.AV1
-            lower.startsWith("vp9") || lower.startsWith("vp09") -> VideoCodec.VP9
-            lower.startsWith("hev1") || lower.startsWith("hvc1") || lower.contains("hevc") -> VideoCodec.HEVC
-            lower.startsWith("avc") || lower.contains("h264") -> VideoCodec.H264
+            lower.contains("av01") || lower.contains("av1") -> VideoCodec.AV1
+            lower.contains("vp9") || lower.contains("vp09") -> VideoCodec.VP9
+            lower.contains("hev1") || lower.contains("hvc1") || lower.contains("hevc") ||
+                lower.contains("h265") || lower.contains("bytevc1") -> VideoCodec.HEVC
+            lower.contains("avc") || lower.contains("h264") -> VideoCodec.H264
             else -> VideoCodec.UNKNOWN
         }
     }

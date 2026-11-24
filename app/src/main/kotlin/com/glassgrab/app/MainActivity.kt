@@ -2,6 +2,7 @@ package com.glassgrab.app
 
 import android.content.Intent
 import android.os.Bundle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
@@ -25,6 +26,7 @@ import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -33,9 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
-import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import androidx.window.core.layout.WindowSizeClass
 import com.glassgrab.app.navigation.GlassGrabRoute
@@ -123,7 +123,7 @@ private fun GlassGrabRootApp(
     onSharedUrlConsumed: () -> Unit,
     downloadsViewModel: DownloadsViewModel = hiltViewModel(),
 ) {
-    val backStack = rememberNavBackStack(GlassGrabRoute.Home)
+    val backStack = remember { mutableStateListOf<GlassGrabRoute>(GlassGrabRoute.Home) }
     val activeDownloads by downloadsViewModel.activeDownloads.collectAsStateWithLifecycle()
     var activeFormatSheetMedia by remember { mutableStateOf<MediaItemInfo?>(null) }
 
@@ -131,7 +131,7 @@ private fun GlassGrabRootApp(
     val windowSizeClass = currentWindowAdaptiveInfo().windowSizeClass
     val useNavigationRail = windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)
 
-    val topLevelRoutes: List<NavKey> = remember {
+    val topLevelRoutes: List<GlassGrabRoute> = remember {
         listOf(
             GlassGrabRoute.Home,
             GlassGrabRoute.Downloads,
@@ -159,9 +159,25 @@ private fun GlassGrabRootApp(
         }
     }
 
+    fun popBack() {
+        if (backStack.size > 1) {
+            backStack.removeAt(backStack.lastIndex)
+        }
+    }
+
+    BackHandler(enabled = backStack.size > 1) {
+        popBack()
+    }
+
     SharedTransitionLayout {
         CompositionLocalProvider(LocalGlassHazeState provides hazeState) {
-            AnimatedMeshBackground(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                AnimatedMeshBackground(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .hazeSource(hazeState),
+                ) {}
+
                 Row(modifier = Modifier.fillMaxSize()) {
                     if (useNavigationRail && showChrome) {
                         NavigationRail(modifier = Modifier.statusBarsPadding()) {
@@ -180,12 +196,11 @@ private fun GlassGrabRootApp(
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .statusBarsPadding()
-                                .hazeSource(hazeState),
+                                .statusBarsPadding(),
                         ) {
                             NavDisplay(
                                 backStack = backStack,
-                                onBack = { if (backStack.size > 1) backStack.removeLastOrNull() },
+                                onBack = ::popBack,
                                 entryProvider = entryProvider {
                                     entry<GlassGrabRoute.Home> {
                                         HomeRoute(
@@ -207,19 +222,23 @@ private fun GlassGrabRootApp(
                                     entry<GlassGrabRoute.Settings> {
                                         SettingsRoute(
                                             isDebugBuild = BuildConfig.DEBUG,
-                                            onOpenDesignGallery = { backStack.add(GlassGrabRoute.DesignGallery) },
+                                            onOpenDesignGallery = {
+                                                if (backStack.lastOrNull() != GlassGrabRoute.DesignGallery) {
+                                                    backStack.add(GlassGrabRoute.DesignGallery)
+                                                }
+                                            },
                                         )
                                     }
                                     entry<GlassGrabRoute.Player> { key ->
                                         PlayerScreen(
                                             mediaUri = key.mediaUri,
                                             title = key.title,
-                                            onBack = { backStack.removeLastOrNull() },
+                                            onBack = ::popBack,
                                         )
                                     }
                                     entry<GlassGrabRoute.DesignGallery> {
                                         DesignGalleryScreen(
-                                            onBack = { backStack.removeLastOrNull() },
+                                            onBack = ::popBack,
                                         )
                                     }
                                 },

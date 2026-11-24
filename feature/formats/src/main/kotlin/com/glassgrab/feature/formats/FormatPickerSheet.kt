@@ -2,6 +2,8 @@ package com.glassgrab.feature.formats
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -258,6 +260,7 @@ fun FormatPickerBottomSheet(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FormatRowCard(
     format: MediaFormat,
@@ -275,11 +278,19 @@ private fun FormatRowCard(
         ) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(format.label, style = MaterialTheme.typography.titleMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(GlassSpacing.xxs)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(GlassSpacing.xxs),
+                    verticalArrangement = Arrangement.spacedBy(GlassSpacing.xxs),
+                ) {
                     GlassBadge(format.container)
+                    format.dimensionsLabel?.let { GlassBadge(it) }
                     format.videoCodec?.let { GlassBadge(it.label) }
                     format.audioCodec?.let { if (format.isAudioOnly) GlassBadge(it.label) }
                     format.fps?.takeIf { it > 0 }?.let { GlassBadge("${it}fps") }
+                    format.bitrateKbps?.takeIf { it > 0 }?.let { kbps ->
+                        val label = if (kbps >= 1000) String.format(java.util.Locale.US, "%.1f Mbps", kbps / 1000.0) else "${kbps} kbps"
+                        GlassBadge(label)
+                    }
                     if (format.isNoWatermark) {
                         GlassBadge(
                             "No watermark",

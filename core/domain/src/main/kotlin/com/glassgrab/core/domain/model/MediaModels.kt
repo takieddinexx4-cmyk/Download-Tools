@@ -50,6 +50,8 @@ data class MediaFormat(
     val isNoWatermark: Boolean = false,
     val requiresMerge: Boolean = false,
     val ytDlpSelector: String,
+    val bitrateKbps: Int? = null,
+    val dimensionsLabel: String? = null,
 )
 
 @Serializable
